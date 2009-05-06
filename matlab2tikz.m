@@ -216,7 +216,10 @@ function saveToFile( filename )
   % actually print the stuff
   fprintf( fid, '%% This file was created by %s v%s.\n\n',              ...
                                    matlab2tikzName, matlab2tikzVersion );
-
+  
+  % do post-generation text edits
+  tikzOptions=editStructure(fh,tikzOptions);
+  
   if isempty(tikzOptions)
       fprintf( fid, '\\begin{tikzpicture}\n' );
   else
@@ -603,6 +606,9 @@ function str = drawAxes( handle, alignmentOptions )
       % contribute to 'axisOpts'.
       matfig2pgfOpt.CurrentAxesHandle = handle;
       childrenStr = handleAllChildren( handle );
+  
+      % do post-generation text edits
+      axisOpts=editStructure(handle,axisOpts);
 
       % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
       % Format 'axisOpts' nicely.
@@ -663,6 +669,9 @@ function str = drawLine( handle )
                    getLineOptions( lineStyle, lineWidth ), ... % line options
                    getMarkerOptions( handle )              ... % marker options
                  ];
+             
+  % do post-generation text edits
+  drawOptions=editStructure(handle,drawOptions);
 
   % insert draw options
   opts = [ '\n', collapse( drawOptions, ',\n' ), '\n' ];
@@ -1129,6 +1138,9 @@ function str = drawPatch( handle )
       xEdgeColor = getColor( handle, edgeColor, 'patch' );
       drawOptions = [ drawOptions, sprintf( 'draw=%s', xEdgeColor ) ];
   end
+  
+  % do post-generation text edits
+  drawOptions=editStructure(handle,drawOptions);
 
   drawOpts = collapse( drawOptions, ',' );
   % -----------------------------------------------------------------------
@@ -1189,7 +1201,7 @@ function str = drawImage( handle )
 
   X = xLimits(1):xLimits(end);
   Y = yLimits(1):yLimits(end);
-
+  
   cdata = get( handle, 'CData' );
 
   % draw the thing
@@ -1426,6 +1438,10 @@ function str = drawBarseries( h )
   else
       drawOptions = [ drawOptions, sprintf( 'draw=%s', xEdgeColor ) ];
   end
+  
+  % do post-generation text edits
+  drawOptions=editStructure(h,drawOptions);
+
   drawOpts = collapse( drawOptions, ',' );
   % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
@@ -1483,6 +1499,9 @@ function str = drawStemseries( h )
                    getLineOptions( lineStyle, lineWidth ), ... % line options
                    getMarkerOptions( h )                   ... % marker options
                  ];
+
+  % do post-generation text edits
+  drawOptions=editStructure(h,drawOptions);
 
   % insert draw options
   drawOpts =  collapse( drawOptions, ',' );
@@ -1545,6 +1564,9 @@ function str = drawStairSeries( h )
                    getLineOptions( lineStyle, lineWidth ), ... % line options
                    getMarkerOptions( h )                   ... % marker options
                  ];
+             
+  % do post-generation text edits
+  drawOptions=editStructure(h,drawOptions);
 
   % insert draw options
   drawOpts =  collapse( drawOptions, ',' );
@@ -2179,6 +2201,9 @@ function lOpts = getLegendOpts( handle, isXAxisReversed, isYAxisReversed )
   end
   % - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
+  % do post-generation text edits
+  lStyle=editStructure(handle,lStyle);
+
   if ~isempty(lStyle)
       lOpts = [ lOpts, ...
                 'legend style={' collapse(lStyle,',') '}' ];
@@ -2312,7 +2337,8 @@ function [ ticks, tickLabels ] = getTicks( handle )
 		end
 		tickLabel{k} = sprintf( '$10^{%s}$', str );
 	    end
-	end
+    end
+    
 	tickLabels = collapse( tickLabel, ',' );
     else
 	tickLabels = [];
@@ -3448,3 +3474,86 @@ end
 % =========================================================================
 % *** END FUNCTION alignSubPlots
 % =========================================================================
+
+
+% =========================================================================
+% *** FUNCTION editStructure
+% ***
+% *** Once a text string for pgfplots has been generated, allow
+% *** user-defined edits to it.  This is indicated by the UserData
+% *** property associated with that part of the figure object.
+% ***
+% *** We only act if we find the following structure inside the UserData:
+% *** tikz.pgfplots:
+% *** tikz.pgfplots.append - add the contained extra text to the pgf string
+% *** tikz.pgfplots.regexp - perform a regular expression replace on the
+% ***                        generated pgf string.  This struct contains text
+% ***                        fields passed directly to regexprep():
+% ***
+% ***    expression: the regular expression matched against elements of the
+% ***      generated pgf code
+% ***    replace: the text/regular expression the matched text is replaced with
+% ***    options: regexprep() options, notably 'ignorecase' or 'preservecase'
+% ***
+% ***
+% =========================================================================
+function pgfOpts=editStructure(objHandle,pgfOpts)
+
+    % read out the UserData field
+    userData=get(objHandle,'UserData');
+
+    % if there's nothing there, just return what we originally received
+    if isempty(userData)
+        return;
+    end
+
+    % UserData objects can be used by other code to store data in figures
+    % - if it's not a structure we aren't interested
+    if ~isstruct(userData)
+        return;
+    end
+
+    % look for our specific structure - give up if we don't find it
+    if ~cellMemberExists(userData,'tikz')
+        return;
+    end
+    if ~cellMemberExists(userData.tikz,'pgfplots')
+        return;
+    end
+
+    % look for specific entries of tikz.pgfplots.regexp, which contains values
+    % passed to regexprep():
+
+
+    if cellMemberExists(userData.tikz.pgfplots,'regexp')
+        regexpObj=userData.tikz.pgfplots.regexp;
+        if cellMemberExists(regexpObj,'expression') && ...
+                cellMemberExists(regexpObj,'replace')
+            if cellMemberExists(regexpObj,'options')
+                pgfOpts=regexprep(pgfOpts, ...
+                    regexpObj.expression, regexpObj.replace, regexpObj.options)
+            else
+                pgfOpts=regexprep(pgfOpts, ...
+                    regexpObj.expression, regexpObj.replace)
+            end
+        end
+    end            
+
+    % now look for a tikz.pgfplots.append tag
+    % if we found it, add its contents onto the end of the list
+    %
+    % (do this after the regexp so it's possible to add non-regexp fields -
+    % if you want this value run through the regexp, do it before you fill it
+    % into UserData)
+
+    if cellMemberExists(userData.tikz.pgfplots,'append')
+        pgfOpts = [pgfOpts, userData.tikz.pgfplots.append]
+    end
+
+end
+
+    function exist=cellMemberExists(cell,name)
+        exist=~isempty(find(ismember(fieldnames(cell),name))==1);
+    end
+    
+    
